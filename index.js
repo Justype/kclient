@@ -186,28 +186,34 @@ aio.on('connection', function (socket) {
   var record;
   let id = socket.id;
 
+  function startRecord(device) {
+    var opts = { channels: 2, rate: 44100, format: 'S16LE' };
+    if (device !== undefined) opts.device = device;
+    var r = pulse.createRecordStream(opts);
+    r.on('error', function(err) {
+      if (device !== undefined) {
+        console.log('[kclient] record on "' + device + '" failed (' + (err.message || err) + '), retrying with PA default source');
+        record = startRecord(undefined);
+      } else {
+        console.log('[kclient] audio record failed on PA default source:', err.message || err);
+        record = null;
+      }
+    });
+    r.on('connection', function() {
+      r.on('data', function(chunk) {
+        let i16Array = Int16Array.from(chunk);
+        if (!i16Array.every(item => item === 0)) {
+          aio.sockets.to(id).emit('audio', chunk);
+        }
+      });
+    });
+    return r;
+  }
+
   function open() {
     if (audioEnabled) {
       if (record) record.end();
-      record = pulse.createRecordStream({
-                 device: 'auto_null.monitor',
-                 channels: 2,
-                 rate: 44100,
-                 format: 'S16LE',
-               });
-      record.on('error', function(err) {
-        console.log('[kclient] audio record stream error (auto_null.monitor not ready?):', err.message || err);
-        record = null;
-      });
-      record.on('connection', function(){
-        record.on('data', function(chunk) {
-          // Only send non-zero audio data
-          let i16Array = Int16Array.from(chunk);
-          if (! i16Array.every(item => item === 0)) {
-            aio.sockets.to(id).emit('audio', chunk);
-          }
-        });
-      });
+      record = startRecord('auto_null.monitor');
     }
   }
   function close() {
@@ -216,10 +222,8 @@ aio.on('connection', function (socket) {
     }
   }
 
-  // Dump blobs to pulseaudio sink
-  async function micData(buffer) {
-    await fsw.writeFile('/defaults/mic.sock', buffer);
-  }
+  // Mic injection not supported in this deployment (no /defaults/mic.sock consumer).
+  async function micData(_buffer) {}
 
   // Incoming socket requests
   socket.on('open', open);
