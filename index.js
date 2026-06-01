@@ -21,6 +21,34 @@ var ejs = require('ejs');
 var app = require('express')();
 var http = require('http').Server(app);
 var bodyParser = require('body-parser');
+
+// Intercept /websockify WebSocket upgrades BEFORE Socket.IO attaches.
+// Socket.IO calls socket.destroy() on any upgrade request that doesn't match
+// its own path, so we must handle /websockify before Socket.IO ever sees it.
+(function() {
+  var _net = require('net');
+  var _origEmit = http.emit.bind(http);
+  http.emit = function(event, req, socket, head) {
+    if (event === 'upgrade' && req && req.url && req.url.includes('websockify')) {
+      var bk = _net.connect(KASM_WS_PORT, '127.0.0.1');
+      bk.on('connect', function() {
+        var h = req.method + ' ' + req.url + ' HTTP/1.1\r\n';
+        for (var i = 0; i < req.rawHeaders.length; i += 2) {
+          h += req.rawHeaders[i] + ': ' + req.rawHeaders[i + 1] + '\r\n';
+        }
+        h += '\r\n';
+        bk.write(h);
+        if (head && head.length) bk.write(head);
+        bk.pipe(socket);
+        socket.pipe(bk);
+      });
+      bk.on('error', function() { socket.destroy(); });
+      socket.on('error', function() { bk.destroy(); });
+      return;
+    }
+    return _origEmit(event, req, socket, head);
+  };
+})();
 var baseRouter = express.Router();
 var fsw = require('fs').promises;
 var fs = require('fs');
@@ -192,27 +220,6 @@ aio.on('connection', function (socket) {
   socket.on('close', close);
   socket.on('disconnect', close);
   socket.on('micdata', micData);
-});
-
-// WebSocket proxy — forward /websockify to KasmVNC's internal port
-var net = require('net');
-http.on('upgrade', function(req, socket, head) {
-  if (req.url.includes('websockify')) {
-    var bk = net.connect(KASM_WS_PORT, '127.0.0.1');
-    bk.on('connect', function() {
-      var h = req.method + ' ' + req.url + ' HTTP/1.1\r\n';
-      for (var i = 0; i < req.rawHeaders.length; i += 2) {
-        h += req.rawHeaders[i] + ': ' + req.rawHeaders[i + 1] + '\r\n';
-      }
-      h += '\r\n';
-      bk.write(h);
-      if (head && head.length) bk.write(head);
-      bk.pipe(socket);
-      socket.pipe(bk);
-    });
-    bk.on('error', function() { socket.destroy(); });
-    socket.on('error', function() { bk.destroy(); });
-  }
 });
 
 // Spin up application
