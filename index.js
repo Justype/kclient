@@ -30,8 +30,10 @@ var bodyParser = require('body-parser');
   var _origEmit = http.emit.bind(http);
   http.emit = function(event, req, socket, head) {
     if (event === 'upgrade' && req && req.url && req.url.includes('websockify')) {
+      console.log('[kclient] websockify upgrade intercepted, forwarding to KasmVNC port', KASM_WS_PORT);
       var bk = _net.connect(KASM_WS_PORT, '127.0.0.1');
       bk.on('connect', function() {
+        console.log('[kclient] connected to KasmVNC, forwarding request');
         var h = req.method + ' ' + req.url + ' HTTP/1.1\r\n';
         for (var i = 0; i < req.rawHeaders.length; i += 2) {
           h += req.rawHeaders[i] + ': ' + req.rawHeaders[i + 1] + '\r\n';
@@ -42,8 +44,8 @@ var bodyParser = require('body-parser');
         bk.pipe(socket);
         socket.pipe(bk);
       });
-      bk.on('error', function() { socket.destroy(); });
-      socket.on('error', function() { bk.destroy(); });
+      bk.on('error', function(err) { console.error('[kclient] KasmVNC connect error:', err.message); socket.destroy(); });
+      socket.on('error', function(err) { console.error('[kclient] socket error:', err.message); bk.destroy(); });
       return;
     }
     return _origEmit(event, req, socket, head);
@@ -193,6 +195,10 @@ aio.on('connection', function (socket) {
                  rate: 44100,
                  format: 'S16LE',
                });
+      record.on('error', function(err) {
+        console.log('[kclient] audio record stream error (auto_null.monitor not ready?):', err.message || err);
+        record = null;
+      });
       record.on('connection', function(){
         record.on('data', function(chunk) {
           // Only send non-zero audio data
