@@ -6,6 +6,8 @@ var PASSWORD = process.env.PASSWORD || 'abc';
 var SUBFOLDER = process.env.SUBFOLDER || '/';
 var TITLE = process.env.TITLE || 'KasmVNC Client';
 var FM_HOME = process.env.FM_HOME || '/config';
+var LISTEN_PORT = parseInt(process.env.LISTEN_PORT) || 6900;
+var KASM_WS_PORT = parseInt(process.env.KASM_WS_PORT) || 6901;
 var PATH;
 if (SUBFOLDER != '/') {
   PATH = '&path=' + SUBFOLDER.substring(1) + 'websockify'
@@ -192,6 +194,27 @@ aio.on('connection', function (socket) {
   socket.on('micdata', micData);
 });
 
-// Spin up application on 6900
+// WebSocket proxy — forward /websockify to KasmVNC's internal port
+var net = require('net');
+http.on('upgrade', function(req, socket, head) {
+  if (req.url.includes('websockify')) {
+    var bk = net.connect(KASM_WS_PORT, '127.0.0.1');
+    bk.on('connect', function() {
+      var h = req.method + ' ' + req.url + ' HTTP/1.1\r\n';
+      for (var i = 0; i < req.rawHeaders.length; i += 2) {
+        h += req.rawHeaders[i] + ': ' + req.rawHeaders[i + 1] + '\r\n';
+      }
+      h += '\r\n';
+      bk.write(h);
+      if (head && head.length) bk.write(head);
+      bk.pipe(socket);
+      socket.pipe(bk);
+    });
+    bk.on('error', function() { socket.destroy(); });
+    socket.on('error', function() { bk.destroy(); });
+  }
+});
+
+// Spin up application
 app.use(SUBFOLDER, baseRouter);
-http.listen(6900);
+http.listen(LISTEN_PORT);
